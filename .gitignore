@@ -1,0 +1,46 @@
+# Private identity and schedules
+student-profile.md
+student-profile.local.*
+*.local.*
+references/timetable.json
+assets/timetables/
+private/
+# User documents, evidence, generated output, and archives
+*.docx
+*.doc
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.zip
+*.skill
+work/
+output/
+outputs/
+screenshots/
+# Secrets, machine configuration, caches
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*
+secrets*
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.codex/
+.agents/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Inspection and patch files
+inspection.json
+patch.json
+*.log
