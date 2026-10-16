@@ -28,7 +28,7 @@ inspect 一次读取报告和可选 DOCX 指导书，stdout 输出紧凑 JSON，
 
 位置 ID 为 `word/document.xml#tc3`（单元格）或 `#p12`（段落），从扫描结果直接取，不能猜编号。inspect schema 2 提供单元格的 `paragraph_ids`、子段落 / 嵌套单元格和表格的 `parent_cell`，截图占位仅按段落计数。嵌套表格填叶级单元格或指定段落，不整体替换父单元格。合并单元格按实际 XML 定位，不用界面列号硬算；blank、颜色只是候选提示。图片只做“存在”判断，真实来源由 agent 核实。
 
-patch 示例（期望文字与 source_sha256 均来自本次扫描，不照抄示例值）：
+填写模式 patch 示例（期望文字与 source_sha256 均来自本次扫描，不照抄示例值；修改模式示例见下）：
 
 ```json
 {
@@ -48,6 +48,7 @@ patch 示例（期望文字与 source_sha256 均来自本次扫描，不照抄�
 ```
 
 - 字号由 agent 按 report-rules 判断：无特殊要求且空间适合的新增普通文字，在该条 `set_text` 操作传 `"font_size_pt": 12`。有明确字号要求可传对应磅值；需沿用模板则省略或传 null。脚本只设置新建文字 run 的 `w:sz` / `w:szCs`（12 pt = 24 半磅），保留字体名称及其他属性，不改表格或全文样式；不传参数仍继承模板。该参数仅支持 `set_text`（含教师评语和自动评分），`replace` 保留原混合格式，图注沿用现有插图逻辑，不对这些操作强制字号。
+- patch 的 `mode` 支持 `fill`（省略时默认）和 `revise`。模式由 agent 根据用户指令选择，脚本不猜任务意图、不自行生成正文，也不把进入修改模式当作全局替换授权。
 - 普通 `set_text` 的 `expect` 默认为空；非空区域须提供原文作前置条件，防止覆盖错误位置。`clean_prompt` 仅在确认该区域颜色 / 底纹为填写提示时使用。
 - `field` 支持 name、student_id、class、major、college、school、student_id_last2、date、teacher、teacher_comment、reflection、score；身份默认来自正式 student-profile.md。缺必需字段则在写文件前报错，继续正文时可去掉依赖身份的操作，在 work 目录保存部分稿并说明缺项。
 - `reflection` 仅用于心得/结论正文，`teacher_comment` 仅用于教师评语正文；两者 set_text 自动对每个自然段首行缩进 2 字符，text 中的换行在这两个字段内表示新段落，其他字段保持原换行行为。已有文字只改缩进可用 `{"op":"format_paragraphs","target":"扫描的正文段落或叶级单元格ID","field":"reflection"}`（或 teacher_comment），不传 text、font_size_pt 或 clean_prompt；它只改段落缩进，保留文字、图片和其他格式，跳过空段、编号列表和带图段落。不得把栏名、图注、姓名或签名作为 target，混合单元格应逐个选择正文段落。
@@ -60,6 +61,28 @@ patch 示例（期望文字与 source_sha256 均来自本次扫描，不照抄�
 - 有截图占位的普通文字替换会跳过并返回 `screenshot_slots_unverified` / partial；只有定点插入已核实图像才能移除对应 marker。未完成截图保留原占位，保留不等于完成。
 - 默认输出到原目录，也可用 `--output` 指定 work 中间稿或正式交付目录。替换文件名身份占位符、清除末尾下载副本标记，并去掉 `+`；显式输出名也去加号，使用返回的 output 作为实际链接。无变化则加 `_已填写` 防止覆盖原件。若数字括号是课次 / 版本，或模板有特殊命名要求，传 `--output` 明确指定；去加号后仍校验目标碰撞，绝不覆盖原件或其硬链接。`--overwrite-generated` 仅用于已确认的以前生成版本，不可用于来源不明文件。
 - 返回 `opens`、缺项、跳过原因和待截图项即为一次结构基础 QA。`visual_qa=not_performed` 需补一次已知方法的视觉检查；这不是再跑多套结构校验的理由。工具报错先看具体原因，按上方失败上限执行。
+
+修改模式 patch 示例（仅虚构资料；真实 old / expect 必须从当前报告扫描读取）：
+
+```json
+{
+  "mode": "revise",
+  "source_sha256": "本次扫描的摘要",
+  "filename_replacements": [
+    {"old": "旧同学甲", "field": "name"},
+    {"old": "旧测试班", "field": "class"}
+  ],
+  "operations": [
+    {"target": "word/document.xml#tc1", "field": "name", "expect": "旧同学甲"},
+    {"op": "replace", "target": "word/header1.xml#p0", "old": "旧同学甲", "field": "name"},
+    {"target": "word/document.xml#tc7", "expect": "原步骤全文", "text": "根据手册纠正后的步骤"},
+    {"target": "word/document.xml#tc9", "field": "reflection", "expect": "原心得全文", "text": "依据当前报告重新生成的心得。", "font_size_pt": 12},
+    {"target": "word/document.xml#tc13", "field": "teacher_comment", "expect": "原普通评语全文", "text": "依据修订后的内容重新生成的正式评语。", "font_size_pt": 12}
+  ]
+}
+```
+
+filename_replacements 仅在 revise 模式使用，与 --output 二选一；支持身份字段及 student_id_last2。每个 old 必须在原文件名主体中唯一命中，所有范围互不重叠；新值只从 profile 获取，按原始位置一次替换，避免连锁替换。脚本拒绝歧义或陈旧映射，仍保留原件与来源不明目标保护。正文替换使用原有的 field + expect 或 replace.old，不取消非空前置条件。教师、作者、正常引用及真实批阅由 agent 识别保留；签名图片不通过普通文字操作处理，已确认旧学生签名需要用已有文档工具在副本中定点清除。
 
 定点插图操作示例（放入 operations；ID、路径、来源和图注均换为本次已核实材料）：
 

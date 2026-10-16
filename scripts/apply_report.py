@@ -60,14 +60,37 @@ def last_two(profile):
     return value[-2:]
 
 
-def output_name(source, profile):
+def revised_filename(source, profile, replacements):
+    if not isinstance(replacements, list):
+        raise ValueError('filename_replacements must be a list')
+    spans = []
+    for item in replacements:
+        old, field = item['old'], item['field']
+        if not isinstance(old, str) or not old or source.stem.find(old) < 0 or source.stem.find(old) != source.stem.rfind(old):
+            raise ValueError('Filename old value must match exactly once in the original stem')
+        if field not in PROFILE_FIELDS | {'student_id_last2'}:
+            raise ValueError('Filename replacement requires a supported identity field')
+        value = last_two(profile) if field == 'student_id_last2' else need(profile, field)
+        start = source.stem.index(old)
+        spans.append((start, start + len(old), value))
+    spans.sort()
+    if any(a[1] > b[0] for a, b in zip(spans, spans[1:])):
+        raise ValueError('Overlapping filename identity replacements')
+    name, cursor = '', 0
+    for start, end, value in spans:
+        name += source.stem[cursor:start] + value
+        cursor = end
+    return name + source.stem[cursor:] + source.suffix
+
+
+def output_name(source, profile, replacements=None):
     def replace(m):
         token = m.group()
         if '最后' in token:
             return last_two(profile)
         key = {'学号': 'student_id', '姓名': 'name', '班级': 'class', '专业班级': 'class'}[token]
         return need(profile, key)
-    name = FILENAME_TOKEN.sub(replace, source.name)
+    name = revised_filename(source, profile, replacements) if replacements else FILENAME_TOKEN.sub(replace, source.name)
     if name == source.name:
         name = re.sub(r'(?:\s*[（(]\d+[）)])+(?=\.docx$)', '', name, flags=re.I)
     name = name.replace('+', '')
@@ -270,12 +293,21 @@ def main():
     args = parser.parse_args()
     source = resolve_input(args.docx)
     patch = json.loads(Path(args.patch).read_text(encoding='utf-8-sig'))
+    mode = patch.get('mode', 'fill')
+    if mode not in ('fill', 'revise'):
+        raise ValueError('mode must be fill or revise')
+    replacements = patch.get('filename_replacements')
+    if replacements is not None:
+        if mode != 'revise' or args.output:
+            raise ValueError('filename_replacements requires revise mode and no explicit --output')
+        if not isinstance(replacements, list) or not replacements:
+            raise ValueError('filename_replacements must be a non-empty list')
     raw, entries, trees = read_package(source)
     if patch.get('source_sha256') != hashlib.sha256(raw).hexdigest():
         raise ValueError('Missing/stale source_sha256: use the current inspection snapshot')
     profile_path = Path(args.profile) if args.profile else Path(__file__).resolve().parents[1] / 'references/student-profile.md'
     profile = read_profile(profile_path)
-    output = Path(args.output).resolve() if args.output else source.with_name(output_name(source, profile))
+    output = Path(args.output).resolve() if args.output else source.with_name(output_name(source, profile, replacements))
     output = output.with_name(output.name.replace('+', ''))
     if output.suffix.lower() != '.docx':
         raise ValueError('Output must use the .docx extension')
@@ -420,7 +452,7 @@ def main():
     finally:
         if os.path.exists(temp):
             os.unlink(temp)
-    print(json.dumps({'output': str(output), 'changed': changed, 'skipped': skipped,
+    print(json.dumps({'output': str(output), 'mode': mode, 'changed': changed, 'skipped': skipped,
                       'written_values': [{'target': t, 'text': text_of(nodes[t])[:280]} for t in changed],
                       'missing_required': missing, 'pending': pending, 'screenshot_slots_unverified': shot_slots,
                       'inserted_images': image_records, 'requirements': requirements,
